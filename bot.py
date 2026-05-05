@@ -202,16 +202,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ""
     sender_name = ""
 
-    if msg.forward_origin or msg.forward_from:
-        # Пересланное сообщение
-        text = msg.text or msg.caption or ""
-        # Менеджер = тот кто переслал (реальный отправитель в группе)
-        sender = msg.from_user
-        sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
-    else:
-        text = msg.text or msg.caption or ""
-        sender = msg.from_user
-        sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+    # Текст берём из самого сообщения (пересланное или своё — не важно)
+    text = msg.text or msg.caption or ""
+    sender = msg.from_user
+    sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
 
     if not text:
         return
