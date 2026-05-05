@@ -1,6 +1,7 @@
 import logging
 import re
 import os
+import json
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -37,9 +38,8 @@ def get_sheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    import json
-creds_info = json.loads(os.environ["GOOGLE_CREDS_JSON"])
-creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    creds_info = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
 
@@ -50,7 +50,7 @@ def append_row(row: list):
     sheet.append_row(row, value_input_option="USER_ENTERED")
 
 
-def get_all_fios() -> list[str]:
+def get_all_fios() -> list:
     """Возвращает все ФИО из таблицы для проверки дублей."""
     sheet = get_sheet()
     values = sheet.col_values(3)  # столбец C = ФИО
@@ -76,7 +76,7 @@ def parse_amount(s: str):
     return v * 1000 if 0 < v < 1000 else v
 
 
-def parse_message(text: str) -> dict | None:
+def parse_message(text: str):
     """
     Парсит текст сообщения и возвращает словарь с данными клиента.
     Возвращает None если сообщение не похоже на чек.
@@ -185,7 +185,7 @@ def detect_manager(sender_name: str) -> str:
     return sender_name  # если не нашли — пишем как есть
 
 
-def check_duplicate(fio: str, existing_fios: list[str]) -> bool:
+def check_duplicate(fio: str, existing_fios: list) -> bool:
     return fio.strip().lower() in existing_fios
 
 
