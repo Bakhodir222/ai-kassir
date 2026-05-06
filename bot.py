@@ -330,24 +330,78 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dup_row, existing = find_in_contacts(contacts_sh, data["fio"], data["phone"], data["username"])
 
         if dup_row is not None:
-            logger.info(f"Дубль в Контактах строка {dup_row}")
+            logger.info(f"Клиент найден в Контактах строка {dup_row}")
             was_updated = update_contact(contacts_sh, dup_row, data["phone"], data["username"])
 
-            orig_row, _ = find_original_in_prikhod(prikhod, data["fio"], data["phone"], data["username"])
+            orig_row, orig_row_data = find_original_in_prikhod(prikhod, data["fio"], data["phone"], data["username"])
             original_date = existing[COL_C_DATE - 1] if existing and len(existing) >= COL_C_DATE else "—"
 
-            if orig_row:
+            # Проверяем статус оригинальной записи в Приходе
+            orig_status = ""
+            if orig_row and orig_row_data:
+                orig_status = orig_row_data[COL_P_STATUS - 1].strip() if len(orig_row_data) >= COL_P_STATUS else ""
+
+            if orig_status == "Брон" and data["status"] == "Тулик":
+                # ── ДОПЛАТА: клиент добрал до полной суммы ──
+                logger.info(f"Доплата от {data['fio']}: Брон → Тулик")
+
+                # Обновляем оплату и статус в существующей строке
+                prikhod.update_cell(orig_row, COL_P_PAID, CONTRACT_SUM)
+                prikhod.update_cell(orig_row, COL_P_STATUS, "Тулик")
                 old_note = prikhod.cell(orig_row, COL_P_NOTE).value or ""
-                new_note = f"{old_note} | Дубль чек: {now}".strip(" |")
+                new_note = f"{old_note} | Доплата: {now}".strip(" |")
                 prikhod.update_cell(orig_row, COL_P_NOTE, new_note)
 
-            await msg.reply_text(
-                f"⚠️ Дубль!\n"
-                f"👤 {data['fio']} уже есть в базе\n"
-                f"📅 Первый чек: {original_date}\n"
-                f"Новая строка не добавлена — отметка в оригинале."
-                + ("\n🔗 Контакт дополнен новыми данными." if was_updated else "")
-            )
+                await msg.reply_text(
+                    f"✅ Доплата принята!\n"
+                    f"👤 {data['fio']}\n"
+                    f"💰 Статус обновлён: Брон → Тулик\n"
+                    f"Сумма оплаты в таблице: 500,000 сум"
+                    + ("\n🔗 Контакт дополнен новыми данными." if was_updated else "")
+                )
+
+            elif orig_status == "Брон" and data["status"] == "Брон":
+                # ── ЧАСТИЧНАЯ ДОПЛАТА: добавляем новую оплату к существующей ──
+                logger.info(f"Частичная доплата от {data['fio']}")
+
+                old_paid_str = orig_row_data[COL_P_PAID - 1] if len(orig_row_data) >= COL_P_PAID else "0"
+                try:
+                    old_paid = int(str(old_paid_str).replace(" ", "").replace(",", "") or 0)
+                except:
+                    old_paid = 0
+                new_paid = min(old_paid + data["paid"], CONTRACT_SUM)
+                new_status = "Тулик" if new_paid >= CONTRACT_SUM else "Брон"
+
+                prikhod.update_cell(orig_row, COL_P_PAID, new_paid)
+                prikhod.update_cell(orig_row, COL_P_STATUS, new_status)
+                old_note = prikhod.cell(orig_row, COL_P_NOTE).value or ""
+                new_note = f"{old_note} | Доплата {data['paid']:,}: {now}".strip(" |")
+                prikhod.update_cell(orig_row, COL_P_NOTE, new_note)
+
+                status_emoji = "✅" if new_status == "Тулик" else "🕐"
+                await msg.reply_text(
+                    f"{status_emoji} Доплата записана!\n"
+                    f"👤 {data['fio']}\n"
+                    f"💰 Было: {old_paid:,} → Стало: {new_paid:,} сум\n"
+                    f"Статус: {new_status}"
+                    + ("\n🔗 Контакт дополнен новыми данными." if was_updated else "")
+                )
+
+            else:
+                # ── ДУБЛЬ: тот же статус что уже есть ──
+                logger.info(f"Дубль: {data['fio']} уже {orig_status}")
+                if orig_row:
+                    old_note = prikhod.cell(orig_row, COL_P_NOTE).value or ""
+                    new_note = f"{old_note} | Дубль чек: {now}".strip(" |")
+                    prikhod.update_cell(orig_row, COL_P_NOTE, new_note)
+
+                await msg.reply_text(
+                    f"⚠️ Дубль!\n"
+                    f"👤 {data['fio']} уже есть в базе\n"
+                    f"📅 Первый чек: {original_date}\n"
+                    f"Новая строка не добавлена — отметка в оригинале."
+                    + ("\n🔗 Контакт дополнен новыми данными." if was_updated else "")
+                )
         else:
             contacts_sh.append_row(
                 [data["fio"], data["phone"], data["username"], now, "Приход"],
