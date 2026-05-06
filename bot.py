@@ -26,27 +26,13 @@ MANAGERS = {
 TARIFF       = "Стандарт"
 CONTRACT_SUM = 500000
 
-# Столбцы листа Приход (1-based)
-# A=№  B=Дата  C=Менеджер  D=ФИО  E=Контакт  F=Тариф  G=Сумма  H=Оплата  I=Остаток  J=Статус  K=Примечание
-COL_P_NUM     = 1
-COL_P_DATE    = 2
-COL_P_MANAGER = 3
-COL_P_FIO     = 4
-COL_P_CONTACT = 5
-COL_P_TARIFF  = 6
-COL_P_SUM     = 7
-COL_P_PAID    = 8
-COL_P_REM     = 9
-COL_P_STATUS  = 10
-COL_P_NOTE    = 11
+COL_P_NUM     = 1;  COL_P_DATE  = 2;  COL_P_MANAGER = 3
+COL_P_FIO     = 4;  COL_P_CONTACT = 5; COL_P_TARIFF = 6
+COL_P_SUM     = 7;  COL_P_PAID  = 8;  COL_P_REM    = 9
+COL_P_STATUS  = 10; COL_P_NOTE  = 11
 
-# Столбцы листа Контакты (1-based)
-# A=ФИО  B=Телефон  C=@Username  D=Дата добавления  E=Источник
-COL_C_FIO      = 1
-COL_C_PHONE    = 2
-COL_C_USERNAME = 3
-COL_C_DATE     = 4
-COL_C_SOURCE   = 5
+COL_C_FIO = 1; COL_C_PHONE = 2; COL_C_USERNAME = 3
+COL_C_DATE = 4; COL_C_SOURCE = 5
 
 def get_spreadsheet():
     scopes = [
@@ -62,8 +48,7 @@ def normalize_phone(s):
     return re.sub(r"[^\d]", "", s or "")
 
 def is_phone(s):
-    clean = normalize_phone(s)
-    return bool(re.match(r"^\d{9,15}$", clean))
+    return bool(re.match(r"^\d{9,15}$", normalize_phone(s)))
 
 def parse_amount(s):
     s = str(s).strip().replace(" ", "").rstrip(".")
@@ -79,22 +64,21 @@ def parse_message(text):
     tl = text.lower()
 
     PAYMENT_KEYWORDS = [
-        "тулик", "тўлик", "брон", "туланди", "колди",
-        "толик", "toliq", "tolov", "толов", "минг"
+        "тулик","тўлик","брон","туланди","колди",
+        "толик","toliq","tolov","толов","минг"
     ]
     if not any(kw in tl for kw in PAYMENT_KEYWORDS):
         return None
 
     SKIP_PHRASES = [
-        "alif:", "pul o'tkazmasi", "тулик туламаганла",
-        "тулик ёзипсизде", "assalomu", "xaqiqiy chek",
-        "ochirildi", "profilimga", "togirlab"
+        "alif:","pul o'tkazmasi","тулик туламаганла",
+        "тулик ёзипсизде","assalomu","xaqiqiy chek",
+        "ochirildi","profilimga","togirlab"
     ]
     if any(skip in tl for skip in SKIP_PHRASES):
         return None
 
     fio = ""; phone = ""; username = ""
-
     for line in lines:
         if line.startswith("@"):
             if not username: username = line.strip()
@@ -102,8 +86,7 @@ def parse_message(text):
         if is_phone(line):
             if not phone: phone = line.strip()
             continue
-        if any(kw in line.lower() for kw in PAYMENT_KEYWORDS + ["россия", "usa", "сша"]):
-            continue
+        if any(kw in line.lower() for kw in PAYMENT_KEYWORDS + ["россия","usa","сша"]): continue
         if re.match(r"^\d{4}$", line): continue
         if not fio: fio = line
 
@@ -116,10 +99,10 @@ def parse_message(text):
     contact = " / ".join(contact_parts)
 
     paid = 0; status = "Тулик"
-    is_tulik    = any(kw in tl for kw in ["тулик", "тўлик", "толик", "toliq"])
-    has_koldi   = any(kw in tl for kw in ["колди", "qoldi"])
+    is_tulik    = any(kw in tl for kw in ["тулик","тўлик","толик","toliq"])
+    has_koldi   = any(kw in tl for kw in ["колди","qoldi"])
     has_bron    = "брон" in tl
-    has_tulandy = any(kw in tl for kw in ["туланди", "толов", "tolov"])
+    has_tulandy = any(kw in tl for kw in ["туланди","толов","tolov"])
 
     if is_tulik and not has_koldi and not has_bron:
         paid = CONTRACT_SUM; status = "Тулик"
@@ -144,10 +127,8 @@ def parse_message(text):
 
     if paid == 0 and is_tulik: paid = CONTRACT_SUM
 
-    return {
-        "fio": fio, "phone": phone, "username": username,
-        "contact": contact, "paid": paid, "status": status,
-    }
+    return {"fio": fio, "phone": phone, "username": username,
+            "contact": contact, "paid": paid, "status": status}
 
 def detect_manager(sender_name):
     sl = sender_name.lower()
@@ -155,59 +136,109 @@ def detect_manager(sender_name):
         if key in sl: return display
     return sender_name
 
-def find_in_contacts(contacts_sheet, fio, phone, username):
+def split_contact(contact_str):
+    phone = ""; username = ""
+    for part in contact_str.split("/"):
+        part = part.strip()
+        if part.startswith("@"): username = part
+        elif normalize_phone(part): phone = part
+    return phone, username
+
+# ─── Инициализация листа Контакты при старте ────────────────────────────────
+
+def init_contacts_sheet(spreadsheet):
     """
-    Ищет контакт в листе Контакты по любому из полей:
-    - совпадение телефона (если есть)
-    - совпадение @username (если есть)
-    - совпадение ФИО (как запасной вариант)
-    Возвращает (row_index, existing_record) или (None, None)
+    Запускается один раз при старте бота.
+    Если лист Контакты уже существует — ничего не делает.
+    Если не существует — создаёт и заполняет из листа Приход.
     """
-    all_rows = contacts_sheet.get_all_values()
+    try:
+        spreadsheet.worksheet(CONTACTS_SHEET)
+        logger.info("Лист 'Контакты' уже существует — пропускаю инициализацию")
+        return
+    except gspread.WorksheetNotFound:
+        pass
+
+    logger.info("Лист 'Контакты' не найден — создаю и заполняю из Прихода...")
+
+    prikhod = spreadsheet.worksheet(SHEET_NAME)
+    all_rows = prikhod.get_all_values()
+
+    # Собираем уникальные контакты из Прихода
+    contacts = {}  # ключ -> {fio, phone, username}
+
+    for row in all_rows[1:]:
+        if len(row) < COL_P_FIO: continue
+        fio = row[COL_P_FIO - 1].strip()
+        if not fio: continue
+
+        contact_str = row[COL_P_CONTACT - 1].strip() if len(row) >= COL_P_CONTACT else ""
+        phone, username = split_contact(contact_str)
+        phone_digits = normalize_phone(phone)
+
+        key = phone_digits if phone_digits else fio.lower()
+
+        if key not in contacts:
+            contacts[key] = {"fio": fio, "phone": phone, "username": username}
+        else:
+            ex = contacts[key]
+            if not ex["phone"] and phone: ex["phone"] = phone
+            if not ex["username"] and username: ex["username"] = username
+            if len(fio) > len(ex["fio"]): ex["fio"] = fio
+
+    # Создаём лист
+    contacts_sh = spreadsheet.add_worksheet(title=CONTACTS_SHEET, rows=2000, cols=5)
+
+    # Заголовок
+    contacts_sh.append_row(["ФИО", "Телефон", "@Username", "Дата добавления", "Источник"])
+
+    # Данные
+    rows_to_insert = [
+        [c["fio"], c["phone"], c["username"], "", "Приход"]
+        for c in contacts.values()
+    ]
+    if rows_to_insert:
+        contacts_sh.append_rows(rows_to_insert, value_input_option="USER_ENTERED")
+
+    logger.info(f"Готово! Перенесено {len(rows_to_insert)} контактов в лист 'Контакты'")
+
+# ─── Работа с контактами ────────────────────────────────────────────────────
+
+def find_in_contacts(contacts_sh, fio, phone, username):
+    all_rows = contacts_sh.get_all_values()
     phone_digits   = normalize_phone(phone)
     username_lower = username.lower() if username else ""
     fio_lower      = fio.strip().lower()
 
     for i, row in enumerate(all_rows[1:], start=2):
-        row_fio      = row[COL_C_FIO - 1].strip().lower()      if len(row) >= COL_C_FIO      else ""
-        row_phone    = normalize_phone(row[COL_C_PHONE - 1])    if len(row) >= COL_C_PHONE    else ""
-        row_username = row[COL_C_USERNAME - 1].strip().lower()  if len(row) >= COL_C_USERNAME else ""
+        row_fio   = row[COL_C_FIO - 1].strip().lower()     if len(row) >= COL_C_FIO      else ""
+        row_phone = normalize_phone(row[COL_C_PHONE - 1])  if len(row) >= COL_C_PHONE    else ""
+        row_uname = row[COL_C_USERNAME - 1].strip().lower() if len(row) >= COL_C_USERNAME else ""
 
-        # Совпадение по телефону
         if phone_digits and row_phone and phone_digits == row_phone:
             return i, row
-        # Совпадение по @username
-        if username_lower and row_username and username_lower == row_username:
+        if username_lower and row_uname and username_lower == row_uname:
             return i, row
-        # Совпадение по ФИО (только если нет телефона и юзернейма в обеих записях)
-        if fio_lower == row_fio and not phone_digits and not row_phone and not username_lower and not row_username:
+        if fio_lower == row_fio and not phone_digits and not row_phone and not username_lower and not row_uname:
             return i, row
 
     return None, None
 
-def update_contact(contacts_sheet, row_index, phone, username):
-    """Дополняет существующий контакт новыми данными если их не было."""
-    row = contacts_sheet.row_values(row_index)
-    row_phone    = row[COL_C_PHONE - 1].strip()    if len(row) >= COL_C_PHONE    else ""
-    row_username = row[COL_C_USERNAME - 1].strip() if len(row) >= COL_C_USERNAME else ""
-
+def update_contact(contacts_sh, row_index, phone, username):
+    row = contacts_sh.row_values(row_index)
+    row_phone = row[COL_C_PHONE - 1].strip()    if len(row) >= COL_C_PHONE    else ""
+    row_uname = row[COL_C_USERNAME - 1].strip() if len(row) >= COL_C_USERNAME else ""
     updated = False
     if phone and not row_phone:
-        contacts_sheet.update_cell(row_index, COL_C_PHONE, phone)
+        contacts_sh.update_cell(row_index, COL_C_PHONE, phone)
         updated = True
-    if username and not row_username:
-        contacts_sheet.update_cell(row_index, COL_C_USERNAME, username)
+    if username and not row_uname:
+        contacts_sh.update_cell(row_index, COL_C_USERNAME, username)
         updated = True
-
     return updated
 
-def add_contact(contacts_sheet, fio, phone, username, now):
-    """Добавляет новый контакт в лист Контакты."""
-    contacts_sheet.append_row([fio, phone, username, now, "Приход"], value_input_option="USER_ENTERED")
-
-def find_original_in_prikhod(prikhod_sheet, fio, phone, username):
-    """Ищет оригинальную строку в листе Приход для пометки дубля."""
-    all_rows = prikhod_sheet.get_all_values()
+def find_original_in_prikhod(prikhod, fio, phone, username):
+    all_rows = prikhod.get_all_values()
     phone_digits   = normalize_phone(phone)
     username_lower = username.lower() if username else ""
     fio_lower      = fio.strip().lower()
@@ -218,8 +249,8 @@ def find_original_in_prikhod(prikhod_sheet, fio, phone, username):
         row_phone   = normalize_phone(row_contact)
         row_uname   = ""
         for part in row_contact.split("/"):
-            part = part.strip()
-            if part.startswith("@"): row_uname = part.lower()
+            p = part.strip()
+            if p.startswith("@"): row_uname = p.lower()
 
         if row_fio != fio_lower: continue
         if phone_digits and row_phone and phone_digits == row_phone: return i, row
@@ -227,6 +258,8 @@ def find_original_in_prikhod(prikhod_sheet, fio, phone, username):
         if not phone_digits and not row_phone: return i, row
 
     return None, None
+
+# ─── Обработчик сообщений ───────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -254,62 +287,57 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
     try:
-        spreadsheet  = get_spreadsheet()
-        prikhod      = spreadsheet.worksheet(SHEET_NAME)
-        contacts_sh  = spreadsheet.worksheet(CONTACTS_SHEET)
+        spreadsheet = get_spreadsheet()
+        prikhod     = spreadsheet.worksheet(SHEET_NAME)
+        contacts_sh = spreadsheet.worksheet(CONTACTS_SHEET)
 
-        # Ищем в базе контактов
-        dup_contact_row, existing = find_in_contacts(
+        dup_row, existing = find_in_contacts(
             contacts_sh, data["fio"], data["phone"], data["username"]
         )
 
-        if dup_contact_row is not None:
+        if dup_row is not None:
             # ── ДУБЛЬ ──
-            logger.info(f"Дубль найден в Контактах строка {dup_contact_row}")
+            logger.info(f"Дубль в Контактах строка {dup_row}")
+            was_updated = update_contact(contacts_sh, dup_row, data["phone"], data["username"])
 
-            # Дополняем контакт новыми данными (телефон/юзернейм)
-            was_updated = update_contact(contacts_sh, dup_contact_row, data["phone"], data["username"])
-            if was_updated:
-                logger.info("Контакт дополнен новыми данными")
-
-            # Помечаем оригинал в Приходе
             orig_row, _ = find_original_in_prikhod(
                 prikhod, data["fio"], data["phone"], data["username"]
             )
-            original_date = existing[COL_C_DATE - 1] if len(existing) >= COL_C_DATE else ""
+            original_date = existing[COL_C_DATE - 1] if existing and len(existing) >= COL_C_DATE else "—"
 
             if orig_row:
                 old_note = prikhod.cell(orig_row, COL_P_NOTE).value or ""
                 new_note = f"{old_note} | Дубль чек: {now}".strip(" |")
                 prikhod.update_cell(orig_row, COL_P_NOTE, new_note)
-                logger.info(f"Оригинал помечен в строке {orig_row}")
 
             await msg.reply_text(
                 f"⚠️ Дубль!\n"
-                f"👤 {data['fio']} уже есть в базе контактов\n"
-                f"📅 Первый чек: {original_date or '—'}\n"
-                f"Новая строка не добавлена — отметка поставлена в оригинале."
-                + (f"\n🔗 Контакт дополнен новыми данными." if was_updated else "")
+                f"👤 {data['fio']} уже есть в базе\n"
+                f"📅 Первый чек: {original_date}\n"
+                f"Новая строка не добавлена — отметка в оригинале."
+                + ("\n🔗 Контакт дополнен новыми данными." if was_updated else "")
             )
 
         else:
             # ── НОВЫЙ КЛИЕНТ ──
-            # 1. Добавляем в Контакты
-            add_contact(contacts_sh, data["fio"], data["phone"], data["username"], now)
-            logger.info(f"Добавлен в Контакты: {data['fio']}")
+            # 1. В Контакты
+            contacts_sh.append_row(
+                [data["fio"], data["phone"], data["username"], now, "Приход"],
+                value_input_option="USER_ENTERED"
+            )
 
-            # 2. Добавляем в Приход
-            all_rows  = prikhod.get_all_values()
-            next_row  = len(all_rows) + 1
+            # 2. В Приход
+            all_rows   = prikhod.get_all_values()
+            next_row   = len(all_rows) + 1
             client_num = len(all_rows)
-            formula   = f"=G{next_row}-H{next_row}"
+            formula    = f"=G{next_row}-H{next_row}"
 
             row = [
                 client_num, now, manager, data["fio"], data["contact"],
                 TARIFF, CONTRACT_SUM, data["paid"], formula, data["status"], "",
             ]
             prikhod.append_row(row, value_input_option="USER_ENTERED")
-            logger.info(f"Записано в Приход строка {next_row}: {data['fio']}")
+            logger.info(f"Записано строка {next_row}: {data['fio']}")
 
             status_emoji = "✅" if data["status"] == "Тулик" else "🕐"
             await msg.reply_text(
@@ -324,10 +352,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка: {e}")
         await msg.reply_text(f"❌ Ошибка: {e}")
 
+# ─── Запуск ─────────────────────────────────────────────────────────────────
+
 def main():
+    logger.info("Запуск бота...")
+
+    # Инициализация листа Контакты (только если не существует)
+    try:
+        spreadsheet = get_spreadsheet()
+        init_contacts_sheet(spreadsheet)
+    except Exception as e:
+        logger.error(f"Ошибка при инициализации Контактов: {e}")
+
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, handle_message))
-    logger.info("Бот запущен.")
+    logger.info("Бот запущен и слушает группу.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
