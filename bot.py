@@ -3,6 +3,7 @@ import re
 import os
 import json
 from datetime import datetime
+import zoneinfo
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import gspread
@@ -284,7 +285,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Распознан чек: {data}")
     manager = detect_manager(sender_name)
-    now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    tz = zoneinfo.ZoneInfo("Asia/Tashkent")
+    now = datetime.now(tz).strftime("%d.%m.%Y %H:%M:%S")
 
     try:
         spreadsheet = get_spreadsheet()
