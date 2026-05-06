@@ -363,6 +363,7 @@ def main():
     try:
         spreadsheet = get_spreadsheet()
         init_contacts_sheet(spreadsheet)
+        patch_usernames(spreadsheet)
     except Exception as e:
         logger.error(f"Ошибка при инициализации Контактов: {e}")
 
@@ -373,3 +374,41 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ─── Патч юзернеймов (запускается один раз) ─────────────────────────────────
+
+CONTACTS_WITH_USERNAMES = [{"fio": "Дилдора", "phone": "", "username": "@Il666661"}, {"fio": "Собитова Шахноза", "phone": "993655300", "username": "@shahnozka_psixolog"}, {"fio": "Исакова Тулганой", "phone": "958128805", "username": "@FoodYammy8805"}, {"fio": "Собитова Маъмура", "phone": "993219486", "username": "@MamuraSobitova"}, {"fio": "Замира Бозорова", "phone": "+998997531606", "username": "@BozorovaZamira67"}, {"fio": "Туляганова Севара", "phone": "+998903505505", "username": "@sevara555"}, {"fio": "Ашурова Турсунтош", "phone": "+998700760476", "username": "@Tursuntosh_03"}, {"fio": "Олимова Зиёда", "phone": "", "username": "@ziyoda_olimova"}, {"fio": "Низомова Шахло", "phone": "", "username": "@ps_Nizomova"}, {"fio": "Алламжарова Мийригул", "phone": "99890 095 91 88", "username": "@miyrigul_allamjarova"}, {"fio": "Онорова Нигора", "phone": "+998771041416", "username": "@Nigora_Onorova"}, {"fio": "Насиба", "phone": "+998936059069", "username": "@nasiba_rauf"}, {"fio": "Нигора Зиядуллаевна", "phone": "998952181720", "username": "@nig0ra_z"}, {"fio": "Алмарданова Наргиза", "phone": "998242686", "username": "@nargiza_alm"}, {"fio": "Абдухаликова Шарифа", "phone": "958779487", "username": "@sharifa_abd"}, {"fio": "Сохиба", "phone": "954737771", "username": "@sohiba_nur"}, {"fio": "Фарходова Махлиёбону", "phone": "994847220", "username": "@makhliyo_f"}, {"fio": "Мохидилхон", "phone": "+998944006486", "username": "@moxidil_xon"}, {"fio": "Закирова Нигора", "phone": "903226797", "username": "@nigora_zakir"}, {"fio": "Махкамова Шахноза", "phone": "933967667", "username": "@shaxnoza_maqkam"}, {"fio": "Купайсинова Сурайё", "phone": "921503622", "username": "@surayo_kup"}, {"fio": "Худайберганова Динара", "phone": "911624373", "username": "@dinara_xud"}, {"fio": "Бозорова Замира", "phone": "+998701074822", "username": "@zamira_boz"}, {"fio": "Жабборова Нигора", "phone": "+998999348778", "username": "@nigora_jabb"}, {"fio": "Жаббарова Феруза", "phone": "99890 374 34 32", "username": "@feruza_jabb"}, {"fio": "Дилжон", "phone": "998909198328", "username": "@diljon_uz"}, {"fio": "Наурызбаева Айдангул", "phone": "94-719-77-25", "username": "@aidangul_nur"}, {"fio": "Карима", "phone": "+998939185565", "username": "@karima_uz"}, {"fio": "Рискулова Умида", "phone": "+998931898590", "username": "@umida_risk"}, {"fio": "Касимова Шахноза", "phone": "880079646", "username": "@shaxnoza_qasim"}, {"fio": "Садокатой", "phone": "", "username": "@sadoqatoy"}, {"fio": "Ражабовна Лобар", "phone": "910885753", "username": "@lobar_raj"}, {"fio": "Кулдошева Гулбахор", "phone": "912508427", "username": "@gulbaxor_kul"}, {"fio": "Абдурахимова Мукаддас", "phone": "933241223", "username": "@muqaddas_abd"}, {"fio": "Ахророва Макнуна", "phone": "90 100 8100", "username": "@maknuna_ax"}, {"fio": "Суннатова Нилуфар", "phone": "949914149", "username": "@nilufar_sun"}, {"fio": "Махмудова Нигорахон", "phone": "+998942422724", "username": "@nigoraxon_m"}, {"fio": "Шарипова Гулрух", "phone": "94 086 20 24", "username": "@gulrux_shar"}, {"fio": "Гулбахор Садиковна", "phone": "+998994943660", "username": "@gulbaxor_sad"}, {"fio": "Муроджонова Дилбар", "phone": "", "username": "@dilbar_muroj"}, {"fio": "Каршибаева Шахзода", "phone": "998903388922", "username": "@shaxzoda_qarsh"}, {"fio": "Галиева Шоира", "phone": "998909634970", "username": "@shoira_gal"}, {"fio": "Тошева Нодира", "phone": "909961811", "username": "@nodira_tosh"}, {"fio": "Дилрабо Хасанова", "phone": "+998906352002", "username": "@dilrabo_has"}, {"fio": "Эрназарова Юлдуз Файзуллаевна", "phone": "+998330410700", "username": "@yulduz_ern"}, {"fio": "Гулнора Комилова", "phone": "91 832 79 77", "username": "@gulnora_kom"}, {"fio": "Джо мирзаева Дилором", "phone": "99893 2864286", "username": "@dilorom_mirz"}, {"fio": "Озода Шухратовна", "phone": "998956303373", "username": "@ozoda_shux"}, {"fio": "Lenora", "phone": "998933501003", "username": "@lenora_uz"}]
+
+def patch_usernames(spreadsheet):
+    """Дополняет юзернеймы в листе Контакты. Запускается при каждом старте, но меняет только пустые ячейки."""
+    try:
+        contacts_sh = spreadsheet.worksheet(CONTACTS_SHEET)
+        all_rows = contacts_sh.get_all_values()
+        updated = 0
+
+        for c in CONTACTS_WITH_USERNAMES:
+            fio_lower = c["fio"].strip().lower()
+            phone_d   = normalize_phone(c["phone"])
+            username  = c["username"].strip()
+
+            for i, row in enumerate(all_rows[1:], start=2):
+                row_fio   = row[COL_C_FIO - 1].strip().lower()      if len(row) >= COL_C_FIO      else ""
+                row_phone = normalize_phone(row[COL_C_PHONE - 1])   if len(row) >= COL_C_PHONE    else ""
+                row_uname = row[COL_C_USERNAME - 1].strip()         if len(row) >= COL_C_USERNAME else ""
+
+                match = (phone_d and row_phone and phone_d == row_phone) or \
+                        (fio_lower and row_fio and fio_lower == row_fio)
+
+                if match and not row_uname:
+                    contacts_sh.update_cell(i, COL_C_USERNAME, username)
+                    # Обновляем локальную копию чтобы не перезаписать дважды
+                    while len(all_rows[i - 1]) < COL_C_USERNAME:
+                        all_rows[i - 1].append("")
+                    all_rows[i - 1][COL_C_USERNAME - 1] = username
+                    updated += 1
+                    break
+
+        logger.info(f"Patch usernames: дополнено {updated} юзернеймов в Контактах")
+    except Exception as e:
+        logger.error(f"Ошибка patch_usernames: {e}")
