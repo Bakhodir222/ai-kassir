@@ -25,6 +25,21 @@ MANAGERS = {
 TARIFF       = "Стандарт"
 CONTRACT_SUM = 500000
 
+# Столбцы (1-based для gspread):
+# A=№  B=Дата  C=Менеджер  D=ФИО  E=Телефон  F=Тариф  G=Сумма  H=Оплата  I=Остаток(=G-H)  J=Статус  K=Примечание
+
+COL_NUM      = 1   # A
+COL_DATE     = 2   # B
+COL_MANAGER  = 3   # C
+COL_FIO      = 4   # D
+COL_PHONE    = 5   # E
+COL_TARIFF   = 6   # F
+COL_SUM      = 7   # G
+COL_PAID     = 8   # H
+COL_REM      = 9   # I
+COL_STATUS   = 10  # J
+COL_NOTE     = 11  # K
+
 def get_sheet():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -34,15 +49,6 @@ def get_sheet():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
-
-def append_row(row):
-    sheet = get_sheet()
-    sheet.append_row(row, value_input_option="USER_ENTERED")
-
-def get_all_fios():
-    sheet = get_sheet()
-    values = sheet.col_values(3)
-    return [v.strip().lower() for v in values[1:] if v.strip()]
 
 def is_phone(s):
     clean = re.sub(r"[\s\-\(\)\+\.]", "", s)
@@ -146,6 +152,20 @@ def detect_manager(sender_name):
             return display
     return sender_name
 
+def find_duplicate_row(sheet, fio):
+    """
+    Ищет строку с таким же ФИО в таблице.
+    Возвращает (sheet_row_index, original_date) или (None, None).
+    sheet_row_index — номер строки в таблице (1-based, включая заголовок).
+    """
+    all_rows = sheet.get_all_values()
+    fio_lower = fio.strip().lower()
+    for i, row in enumerate(all_rows[1:], start=2):  # строки данных начиная с 2
+        if len(row) >= COL_FIO and row[COL_FIO - 1].strip().lower() == fio_lower:
+            original_date = row[COL_DATE - 1] if len(row) >= COL_DATE else ""
+            return i, original_date
+    return None, None
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
@@ -160,7 +180,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    logger.info(f"Сообщение от {sender_name}: {text[:50]}")
+    logger.info(f"Сообщение от {sender_name}: {text[:60]}")
 
     data = parse_message(text)
     if data is None:
@@ -172,53 +192,72 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = detect_manager(sender_name)
     now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
-    note = ""
     try:
         logger.info("Подключаюсь к Google Sheets...")
-        existing = get_all_fios()
-        logger.info(f"Получено {len(existing)} ФИО из таблицы")
-        if data["fio"].strip().lower() in existing:
-            sheet = get_sheet()
-            all_rows = sheet.get_all_values()
-            first_date = ""
-            for row in all_rows[1:]:
-                if len(row) >= 3 and row[2].strip().lower() == data["fio"].strip().lower():
-                    first_date = row[0]
-                    break
-            note = f"Дубль (первый чек: {first_date})"
-            logger.info(f"Найден дубль: {data['fio']}")
-    except Exception as e:
-        logger.error(f"Ошибка подключения к Sheets: {e}")
-        await msg.reply_text(f"❌ Ошибка подключения к таблице: {e}")
-        return
-
-    try:
-        logger.info(f"Записываю строку: {data['fio']}")
         sheet = get_sheet()
-        next_row = len(sheet.get_all_values()) + 1
-        formula_remainder = f"=F{next_row}-G{next_row}"
+        all_rows = sheet.get_all_values()
+        logger.info(f"Всего строк в таблице: {len(all_rows)}")
 
-        row = [
-            now, manager, data["fio"], data["phone"],
-            TARIFF, CONTRACT_SUM, data["paid"],
-            formula_remainder, data["status"], note,
-        ]
-        append_row(row)
-        logger.info(f"Записано в строку {next_row}!")
+        # Проверяем дубль
+        dup_row_index, original_date = find_duplicate_row(sheet, data["fio"])
 
-        status_emoji = "✅" if data["status"] == "Тулик" else "🕐"
-        dup_text = f"\n⚠️ {note}" if note else ""
-        await msg.reply_text(
-            f"{status_emoji} Записано:\n"
-            f"👤 {data['fio']}\n"
-            f"📞 {data['phone'] or '—'}\n"
-            f"💰 {data['paid']:,} сум | {data['status']}{dup_text}",
-            parse_mode=None
-        )
+        if dup_row_index is not None:
+            # ── ДУБЛЬ: не добавляем новую строку, помечаем оригинал ──
+            logger.info(f"Дубль найден в строке {dup_row_index}: {data['fio']}")
+
+            # Читаем текущую заметку оригинала (столбец K)
+            original_note_cell = sheet.cell(dup_row_index, COL_NOTE).value or ""
+            dup_note = f"Дубль чек: {now}"
+            if original_note_cell:
+                new_note = original_note_cell + f" | {dup_note}"
+            else:
+                new_note = dup_note
+
+            # Обновляем ячейку примечания оригинальной строки
+            sheet.update_cell(dup_row_index, COL_NOTE, new_note)
+            logger.info(f"Обновлена заметка в строке {dup_row_index}")
+
+            await msg.reply_text(
+                f"⚠️ Дубль!\n"
+                f"👤 {data['fio']} уже есть в таблице (строка {dup_row_index - 1}, первый чек: {original_date})\n"
+                f"Новая строка не добавлена. Отметка поставлена в оригинальной записи."
+            )
+
+        else:
+            # ── НОВЫЙ КЛИЕНТ: добавляем строку ──
+            next_row = len(all_rows) + 1
+            # Номер клиента = количество строк данных (без заголовка)
+            client_num = len(all_rows)  # all_rows включает заголовок, поэтому -1+1 = len
+            formula_remainder = f"=G{next_row}-H{next_row}"
+
+            row = [
+                client_num,        # A — №
+                now,               # B — Дата
+                manager,           # C — Менеджер
+                data["fio"],       # D — ФИО
+                data["phone"],     # E — Телефон
+                TARIFF,            # F — Тариф
+                CONTRACT_SUM,      # G — Сумма договора
+                data["paid"],      # H — Оплата
+                formula_remainder, # I — Остаток =G-H
+                data["status"],    # J — Статус
+                "",                # K — Примечание
+            ]
+            sheet.append_row(row, value_input_option="USER_ENTERED")
+            logger.info(f"Записано в строку {next_row}: {data['fio']}")
+
+            status_emoji = "✅" if data["status"] == "Тулик" else "🕐"
+            await msg.reply_text(
+                f"{status_emoji} Записано:\n"
+                f"👤 {data['fio']}\n"
+                f"📞 {data['phone'] or '—'}\n"
+                f"💰 {data['paid']:,} сум | {data['status']}",
+                parse_mode=None
+            )
 
     except Exception as e:
-        logger.error(f"Ошибка записи в таблицу: {e}")
-        await msg.reply_text(f"❌ Ошибка при записи в таблицу: {e}")
+        logger.error(f"Ошибка: {e}")
+        await msg.reply_text(f"❌ Ошибка: {e}")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
