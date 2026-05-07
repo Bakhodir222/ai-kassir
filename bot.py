@@ -28,6 +28,10 @@ MANAGERS = {
 TARIFF       = "Стандарт"
 CONTRACT_SUM = 500000
 
+# Кэш обработанных message_id (защита от двойной доставки Telegram)
+processed_message_ids: set = set()
+MAX_CACHE_SIZE = 1000
+
 COL_P_NUM=1; COL_P_DATE=2; COL_P_MANAGER=3; COL_P_FIO=4; COL_P_CONTACT=5
 COL_P_TARIFF=6; COL_P_SUM=7; COL_P_PAID=8; COL_P_REM=9; COL_P_STATUS=10; COL_P_NOTE=11
 
@@ -311,6 +315,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender = msg.from_user
     sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
     if not text: return
+
+    # Защита от двойной доставки
+    global processed_message_ids
+    msg_id = msg.message_id
+    if msg_id in processed_message_ids:
+        logger.info(f"Сообщение {msg_id} уже обработано — пропускаю")
+        return
+    processed_message_ids.add(msg_id)
+    if len(processed_message_ids) > MAX_CACHE_SIZE:
+        processed_message_ids = set(list(processed_message_ids)[-500:])
 
     logger.info(f"Сообщение от {sender_name}: {text[:60]}")
     data = parse_message(text)
