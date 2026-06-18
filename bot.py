@@ -80,6 +80,7 @@ def get_config(group_id: int):
 
 processed_ids: set = set()
 MAX_CACHE = 2000
+BOT_START_TIME = datetime.now(TZ)  # ignore messages sent before this
 
 PAYMENT_KEYWORDS = [
     "тулик","туллик","тўлик","брон","бронь","туланди","тулади","колди","колли",
@@ -221,17 +222,23 @@ def parse_message(text: str, cfg: dict):
             koldi_m = re.search(r'([\d\s\.\$млн]+)\s*колди', tl)
         if koldi_m:
             raw = koldi_m.group(1).strip()
-            # Take only the LAST number before колди — it's the remaining balance
-            # Ignore sums like "250+400=750+550=1.300.000 туланди X.XXX.XXX колди"
-            # Split by spaces and take last meaningful token
-            tokens = [t for t in re.split(r'[\s,]+', raw) if re.search(r'[0-9]', t)]
-            last_token = tokens[-1] if tokens else raw
             remaining = None
-            if '$' in last_token and usd_rate:
-                usd_m = re.search(r'(\d+)\s*\$', last_token)
+            # USD handling
+            if '$' in raw and usd_rate:
+                usd_m = re.search(r'(\d+)\s*\$', raw)
                 if usd_m: remaining = int(usd_m.group(1)) * usd_rate
             if remaining is None:
-                remaining = parse_amount(last_token)
+                # "7 млн 900" → parse whole string, handles millions correctly
+                # For compound sums like "250+400=1.300.000 туланди 7.200.000"
+                # take the last number-group (after last space if no млн)
+                mlн_m = re.search(r'(\d+)\s*млн\.?\s*(\d*)', raw.lower())
+                if mlн_m:
+                    remaining = int(mlн_m.group(1)) * 1_000_000 + (int(mlн_m.group(2)) * 1000 if mlн_m.group(2) else 0)
+                else:
+                    # Take last space-separated token (plain number like "7.200.000")
+                    tokens = [t for t in re.split(r'[\s,]+', raw) if re.search(r'[0-9]', t)]
+                    last_token = tokens[-1] if tokens else raw
+                    remaining = parse_amount(last_token)
             if remaining and remaining > 0:
                 paid = max(0, contract_sum - remaining)
 
@@ -355,6 +362,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cfg = get_config(chat.id)
     if cfg is None: return
+
+    # Ignore messages sent before bot started (old backlog)
+    if msg.date and msg.date < BOT_START_TIME:
+        logger.info(f"Пропуск старого сообщения от {msg.date} (до запуска бота {BOT_START_TIME})")
+        return
 
     text = msg.text or msg.caption or ""
     sender = msg.from_user
