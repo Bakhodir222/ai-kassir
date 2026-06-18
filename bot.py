@@ -115,6 +115,18 @@ TARIFF_MAP = {
     'pro':  ('Про',   8_400_000),
 }
 
+
+def parse_new_payment(tulandy_str: str) -> int:
+    """
+    Extract only the NEW portion of a payment from a туланди string.
+    Takes the last addend after the final '+' sign.
+    "250+400=750+550=1300" → 550,000 (not the cumulative total)
+    """
+    s = re.sub(r'\s*([+=])\s*', r'\1', tulandy_str.strip())
+    parts = s.split('+')
+    last = re.sub(r'=.*$', '', parts[-1]).strip()
+    return parse_amount(last) or 0
+
 def detect_tariff(tl: str, cfg: dict):
     """
     Returns (tariff_name, contract_sum).
@@ -209,13 +221,17 @@ def parse_message(text: str, cfg: dict):
             koldi_m = re.search(r'([\d\s\.\$млн]+)\s*колди', tl)
         if koldi_m:
             raw = koldi_m.group(1).strip()
-            # Try USD
+            # Take only the LAST number before колди — it's the remaining balance
+            # Ignore sums like "250+400=750+550=1.300.000 туланди X.XXX.XXX колди"
+            # Split by spaces and take last meaningful token
+            tokens = [t for t in re.split(r'[\s,]+', raw) if re.search(r'[0-9]', t)]
+            last_token = tokens[-1] if tokens else raw
             remaining = None
-            if '$' in raw and usd_rate:
-                usd_m = re.search(r'(\d+)\s*\$', raw)
+            if '$' in last_token and usd_rate:
+                usd_m = re.search(r'(\d+)\s*\$', last_token)
                 if usd_m: remaining = int(usd_m.group(1)) * usd_rate
             if remaining is None:
-                remaining = parse_amount(raw)
+                remaining = parse_amount(last_token)
             if remaining and remaining > 0:
                 paid = max(0, contract_sum - remaining)
 
@@ -246,10 +262,14 @@ def parse_message(text: str, cfg: dict):
                 if v: paid = v
         status = "Брон"
     elif has_tulandy:
-        m = re.search(r"([\d\.]+)\s*(?:туланди|тулади|толов|tolov|тулов)", tl)
+        # Extract only the NEW payment — last addend after final '+'
+        m = re.search(r"([\d\s\.\+\=]+?)\s*(?:туланди|тулади|толов|tolov|тулов)", tl)
         if m:
-            v = parse_amount(m.group(1))
+            v = parse_new_payment(m.group(1).strip())
             if v: paid = v
+        if not paid:
+            m2 = re.search(r"(\d+)\s*минг\s*(?:толов|tolov|тулов|туланди|тулади)", tl)
+            if m2: paid = int(m2.group(1)) * 1000
         status = "Тулик" if paid >= contract_sum else "Брон"
 
     # USD in paid amount
